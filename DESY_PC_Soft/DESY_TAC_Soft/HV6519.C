@@ -1,0 +1,137 @@
+#include "HV6519.h"
+#include <time.h>
+HV6519::HV6519()
+{
+}
+
+HV6519::HV6519(int Address,int Channel,VME *Vme)
+{
+  addr=Address;
+  channel=Channel;
+  offset=0x80*Channel;
+  vme=Vme;
+}
+
+HV6519::~HV6519()
+{
+  unsigned short on=0;
+  if(NULL==vme)
+    std::cout << " HV6519::~HV6519: Attention! HV still on!" << std::endl;
+  else{
+    //vme->unlockVME();
+    std::cout << " VME Unlocked " <<std::endl;
+    if(vme) vme->writeVMEdata(this->addr>>16,offset+V6519_POWER,&on); 
+  }
+
+}
+
+void HV6519::SetVoltage(float voltage, bool silentmode)
+{
+  unsigned short polarity=1000;
+  unsigned short on=1;
+  unsigned short chstat=0x2;
+  unsigned short vset=0;
+  unsigned short jumpvolt=10;
+  unsigned short vmon=0;
+  unsigned short ramp=100;
+
+  if(NULL==vme){
+    std::cerr << "No VME connestion" << std::endl;    
+  }
+  if(vme) vme->readVMEdata(this->addr>>16,offset+V6519_POLARITY,(void *)&polarity,cvA32_U_DATA,cvD16);
+  switch(polarity){
+  case 0://negative
+    if(voltage>0){
+      std::cerr << " HV6519::SetVoltage: Wrong polarity" << std::endl;
+      return;
+    }else{
+      vset=(int)(0.5+voltage*-100.);//approximating
+    }
+    break;
+  case 1://positive
+    if(voltage<0){
+       std::cerr << " HV6519::SetVoltage: Wrong polarity" << std::endl;
+      return;
+    }else{
+      vset=(int)(0.5+voltage*100.); //approximating
+    }
+    break; 
+  case 1000:
+    std::cerr << " HV6519::SetVoltage: Cannot read polarity register" << std::endl;
+    return;
+    break;
+  default:
+    std::cerr << " HV6519::SetVoltage: unknown polarity " << polarity<< std::endl;
+    return;
+    break;
+  }
+  if(vme) vme->writeVMEdata(this->addr>>16,offset+V6519_RAMPD,&ramp); 
+  if(vme) vme->writeVMEdata(this->addr>>16,offset+V6519_RAMPU,&ramp); 
+  //we need to change the voltage in order to get a lock on the right one
+  if(vme) vme->writeVMEdata(this->addr>>16,offset+V6519_VSET,&jumpvolt); 
+  //let it drift off
+  //  if(vme) vme->writeVMEdata(this->addr>>16,offset+V6519_POWER,&on);
+  //  usleep(50000);
+  // and recover
+  if(vme) vme->writeVMEdata(this->addr>>16,offset+V6519_VSET,&vset); 
+  on=1;
+  if(vme) vme->writeVMEdata(this->addr>>16,offset+V6519_POWER,&on);
+  if(!silentmode)
+    std::cout << " HV6519::SetVoltage: turning power on \r" <<std::flush;
+  usleep(200000);
+  if(vme) vme->readVMEdata(this->addr>>16,offset+V6519_CHSTAT,&chstat);     
+  while(!V6519_CHSTAT_CHON(chstat)){
+    if(vme) vme->readVMEdata(this->addr>>16,offset+V6519_CHSTAT,&chstat);     
+    usleep(100000);  
+  }
+  if(vme) vme->readVMEdata(this->addr>>16,offset+V6519_VMON,&vmon);
+ int starttime = time(NULL);
+  while((fabs(vmon-vset)>2)&((time(NULL)-starttime)<10)){//added tiomeout after 20 sec
+  
+    if(vmon<1000&&fabs(vmon-vset)<10.) break; 
+    if(vme) vme->readVMEdata(this->addr>>16,offset+V6519_VMON,&vmon);
+    usleep(100000);
+    if(!silentmode)
+      std::cout <<time(NULL)-starttime<< " HV6519::SetVoltage: Vmon " << vmon <<" Vset " << vset << '\r' <<std::flush;
+  }
+  if(!V6519_CHSTAT_CHON(chstat)){
+    on=0;
+    if(vme) vme->writeVMEdata(this->addr>>16,offset+V6519_POWER,&on);
+    std::cerr << " HV6519::SetVoltage: Wrong status after ramp up, powering down " << chstat<< std::endl;
+    
+    return;
+  }
+  sleep(1);
+}
+
+void HV6519::SetCurrentRange(bool range) // 0 - range high 1 - range low (0-300 muA)
+{
+   if(vme) vme->writeVMEdata(this->addr>>16,offset+V6519_IMON_RANGE,&range);
+   usleep(100000);
+}
+
+
+float HV6519::ReadCurrent()
+{
+  unsigned short imon;
+  if(vme) vme->readVMEdata(this->addr>>16,offset+V6519_IMON,&imon); 
+
+  return (float)0.05e-6*imon;
+}
+
+float HV6519::ReadCurrentLowRange()
+{
+  unsigned short imonl;
+  if(vme) vme->readVMEdata(this->addr>>16,offset+V6519_IMONL,&imonl); 
+
+  return (float)5e-9*imonl;
+}
+
+float HV6519::ReadVoltage()
+{
+  unsigned short vmon;
+  if(vme)
+      vme->readVMEdata(this->addr>>16,offset+V6519_VMON,&vmon);
+  return (float)vmon/100.;
+
+}

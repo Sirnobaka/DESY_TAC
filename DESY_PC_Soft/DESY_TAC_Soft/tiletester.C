@@ -1,0 +1,289 @@
+
+#include <iostream>
+#include <fstream>
+#include <stdlib.h>
+#include <stdio.h>
+#include <string.h>
+#include <time.h>
+#include "TStyle.h"
+#include "TROOT.h"
+#include "TTree.h"
+#include "TVector2.h"
+#include "TF1.h"
+#include "TH1.h"
+#include "TString.h"
+#include "TCanvas.h"
+#include "TRint.h"
+#include "TBenchmark.h"
+#include "TFile.h"
+#include "CAENVME.h"
+#include "QDC965A.h"
+#include "HV6519.h"
+#include "HV.h"
+#include "ConfigFile.h"
+#include "analyze_v5.C"
+
+using namespace std;
+
+CAENVME * vme;
+TFile* file;
+TTree* tree;
+//arduino * ard;
+TCanvas* NewCanvas(TString str)
+{
+  TCanvas* can = new TCanvas(str,str,1200,800);
+  return can;
+};
+
+void do_exit(string OutFileName)
+{
+  tree->Write();
+  file->Write();
+  if(NULL!=vme)  vme->closeVME();
+  if(NULL!=tree)tree->Write();
+  if(NULL!=file)file->Close();
+  // Analyze histograms
+  //
+  //std::string filepath = dir + line;
+  //const char* cfilepath = filepath.c_str();
+  char *cfilepath_nonconst = new char[OutFileName.length() + 1];
+  strcpy(cfilepath_nonconst, OutFileName.c_str());
+  cout << "Analyze file:  " << cfilepath_nonconst << endl;
+  analyze(cfilepath_nonconst);
+  //
+  signal(SIGTERM,SIG_DFL);
+  signal(SIGINT ,SIG_DFL);
+  exit(0);
+};
+
+// and finally the programm
+int main(int argc, char* argv[])
+{
+  //printf("******************* The Tiletester greets you ********************* \n \n ");
+
+  //  cout<<"###   D A Q   ###\n"<<endl;
+  //  cout<<"=====>   C O N F I G U R A T I O N   <====\n"<<endl;
+  // cout<<"Configuration file: '"<<argv[1]<<"'"<<endl;
+  vme=NULL;
+  // move the stuff to an own config class... much better thab...
+  ConfigFile config(argv[1]);
+  int MAXEVENTS = config.read<int>("nevents");
+  float SiPM_Voltage = atof(argv[2]);
+  //float SiPM_Voltage;
+  float temperature = atof(argv[3]);
+  temperature = config.read<float>("Temperature");
+  int timeout = 6000;//100 minutes!
+  int interactive = config.read<int>("interactive");
+  int draw = config.read<int>("draw");
+  int SiPM_Voltage_reset = config.read<int>("ResetVoltage");
+  float SiPM_Voltage_set = config.read<float>("SetVoltage");
+  int SiPM_Voltage_off = config.read<int>("OffVoltage");
+  int LED_ON = config.read<int>("LED_On");
+  int Source_ON = config.read<int>("Source_On");
+  int Tile = config.read<int>("Tile");
+  int TilePosition = config.read<int>("TilePosition");
+  float LED_period  = config.read<float>("LED_period");
+  float LED_voltage = config.read<float>("LED_voltage");
+  string outfile  = config.read<string>("outfile");
+  string TileName = config.read<string>("TileName");
+  TString rootoutfile(outfile.data());
+  string rootoutfile_str(rootoutfile.Data());
+  bool printit = false;
+  //cin >> printit;
+  
+  if(printit)
+    cout<<"Output file: "<<rootoutfile<<endl;
+  
+  int nchannel = config.read<int>("nchannel");
+  // cout<<"here"<<endl;
+
+  TString QDCChAString = config.read<string>("channel").data();
+  //  TString QDCChAString("13,15"); // kam temporary
+  QDCChAString +=","; //needed for seperation of channels
+  int QDCCHA[nchannel];
+  TString eval;
+  int counter= 0;
+  for (int i=0; i< QDCChAString.Length(); i++){
+    if(QDCChAString[i]!=',')				// if the element isn't a comma,
+      eval.Append(QDCChAString[i]);		// append it to the string.
+    else						// otherwise,
+      {	int element = eval.Atoi();	// convert the string to an integer,
+	eval = "";				// clear the string, an
+	QDCCHA[counter]=element;
+	counter ++;// append the integer to the array
+      }	
+  }
+  int infocycle = config.read<int>("infocycle");
+  //  unsigned short qdcped = config.read<unsigned short>("iped");
+  //unsigned short qdcped = 180;
+  //cout<<"Reading temperature..."<<endl;
+  //cout<<"Temperature: "<<ard->ReadTemp(0)<<endl;
+
+  file = new TFile(rootoutfile,"RECREATE");
+  int systime = time(NULL);
+  float sysdate = 0;
+  int qdcch[nchannel] ;
+  int charge[32];
+  tree = new TTree("data","data");
+  tree->Branch("qdcch",&qdcch,"qdcch/I");
+  for(int i = 0; i<32;i++){
+    tree->Branch(Form("qdcch%d",i),&charge[i],Form("qdcch%d/I",i));   
+  }
+  tree->Branch("Channels",&QDCCHA , "Channels/I");
+  tree->Branch("temperature",&temperature,"temperature/F");
+  tree->Branch("time",&systime,"time/I");
+  tree->Branch("date",&sysdate,"date/F");
+  tree->Branch("SiPM_Voltage",&SiPM_Voltage,"SiPM_Voltage/F");
+  tree->Branch("LED_ON",&LED_ON,"LED_ON/I");
+  tree->Branch("LED_voltage",&LED_voltage,"LED_voltage/F");
+  tree->Branch("LED_period",&LED_period,"LED_period/F");
+  tree->Branch("Source_ON",&Source_ON,"Source_ON/I");
+  tree->Branch("Tile",&Tile,"Tile/I");
+  tree->Branch("TileName",&TileName);
+  tree->Branch("TilePosition",&TilePosition,"TilePosition/I");
+  systime=0;
+  sysdate=time(NULL);
+  // interactive ROOT session
+  TRint* rint = NULL;
+  if(interactive==1 || draw==1) {
+    rint = new TRint("App", 0x0, 0);
+  }
+  ////////////////////////////////////////////////////////////////
+  // HISTOGRAMS
+  ////////////////////////////////////////////////////////////////
+  // QDC A
+  // TH1F* oldhQDCA = new TH1F("hQDCA","hQDCA/I",4000,0,4000);
+  TH1F * hQDCA[32]; 
+  for (Int_t i=0; i<32;i++){ 
+    TString text = "hQDCA_";
+    text+=i;
+    //   hQDCA[i] = new TH1F(text,text,32768,1,32769);
+    hQDCA[i] = new TH1F(text,text,4000,1,4001);
+  }
+  TCanvas* canQDCA = NULL;
+  if(draw==1) {
+    canQDCA= NewCanvas("QDCA");
+    canQDCA->cd();
+    hQDCA[QDCCHA[0]]->SetLineColor(1);
+    hQDCA[QDCCHA[0]]->Draw();
+    for (Int_t i=1; i<nchannel;i++){ 
+      hQDCA[QDCCHA[i]]->SetLineColor(5+i);
+      hQDCA[QDCCHA[i]]->Draw("same");
+
+ 
+    }
+  }
+  ////////////////////////////////////////////////////////////////
+  vme = new CAENVME(cvA32_U_DATA,cvD16);
+  vme->initVME();
+  QDC965A* qdc=  new QDC965A(0xDD000000,vme,false);  
+  HV6519* hv = new HV6519(0x1240000,0,vme);
+  cout<<"Read voltage "<<hv->ReadVoltage()<<endl;
+  SiPM_Voltage = hv->ReadVoltage();
+  //
+  if (abs(SiPM_Voltage_set) < 50 && abs(SiPM_Voltage_set) > 0.01 && SiPM_Voltage_reset > 0) {
+    cout<<"Setting Voltage to: "<<SiPM_Voltage_set<<endl;
+    hv->SetVoltage(SiPM_Voltage_set, true);
+  } else { 
+    cout << ".......0-0......" << endl;
+  }
+  cout<<"Read voltage again: "<<hv->ReadVoltage()<<endl;
+  cout<<"Current: "<<hv->ReadCurrent()<<endl;
+  //
+  //unsigned int tmpped = ((QDC965A*)qdc) ->SetCurrentPed(qdcped);   //setting current pedestal
+  int NumAcceptedEvents = 0;
+  int ZeroCount=0;
+  int timeout_start = time(NULL);
+  int retQDC;
+  while(NumAcceptedEvents<MAXEVENTS){
+    if (time(NULL)-timeout_start>timeout){
+      cout<<"                                TIMEOUT!!!!! "<<endl;
+      cout<<"                                I'm bored... going home"<<endl;
+      do_exit(rootoutfile_str);
+    }
+    retQDC = 0;
+    retQDC=qdc->ReadoutBuffer();  
+    if(retQDC<0 ) {
+      cout<<"Resetting and configuring modules. Resume data taking."<<endl; 
+      qdc->Reset();
+      qdc->Config();
+      continue;
+    }
+    if(retQDC == 0) {
+      usleep(1);
+      ZeroCount++;
+      continue;
+    }
+    int position = 0;
+    while(position<retQDC){
+      position=qdc->DecodeBuffer(position);
+      if(position<=0 || position>=retQDC){ 
+	break;// 2
+      }// 2
+      for(int i = 0; i<32; i++ ){
+	charge[i]=qdc->GetChannel(i);
+	if (charge[i]!=0){
+	  hQDCA[i]->Fill(charge[i]);
+	}
+      }
+	NumAcceptedEvents++;
+	tree->Fill();
+
+    }
+
+    if(printit)
+      cout<<"                                               Number of events: "<<NumAcceptedEvents<<"\r"<<flush;
+    if(draw && NumAcceptedEvents % 500 == 0) {
+      systime = time(NULL);
+      if(printit) {
+      cout<<NumAcceptedEvents << "         \r" << flush;
+      cout<<"                                               Number of events: "<<NumAcceptedEvents<<"\r"<<flush;
+      }
+      canQDCA->cd();
+      for (Int_t i=0; i<nchannel;i++){
+	
+	if(printit) 
+	  cout << qdcch[i] <<"  ";
+	hQDCA[QDCCHA[i]]->Draw("same");
+	
+      }
+      canQDCA->Update();
+      if(printit)
+	cout<<"         \r" << flush;  
+    }
+    if(NumAcceptedEvents % infocycle == 0) {
+      //	temperature= ard->correct(ard->ReadTemp(0));
+      systime = time(NULL);
+      if(printit)
+	cout<<NumAcceptedEvents<<"           "<<temperature<<"            "<<endl;
+    }
+  }
+  // draw
+  if(draw==1) {
+    canQDCA->cd();
+    for (Int_t i=0; i<nchannel;i++){
+      hQDCA[QDCCHA[i]]->Draw("same");
+    }
+    canQDCA->Update();
+  }
+
+  if(SiPM_Voltage_off > 0){
+    cout<<"Turn HV off"<<endl;
+    hv->SetVoltage(-0.0, false); // false parameter to switch silent mode off
+    //delete hv;
+  }
+  
+  if(interactive==1) {
+   
+    cout<<"Enter '.q' to exit."<<endl;
+    rint->Run(kTRUE);
+  }
+  
+  
+  do_exit(rootoutfile_str);
+
+  return EXIT_SUCCESS;
+}
+
+
+

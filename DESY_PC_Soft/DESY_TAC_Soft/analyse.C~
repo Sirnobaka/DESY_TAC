@@ -1,0 +1,328 @@
+#include "TH1.h"
+#include "TF1.h"
+#include "TROOT.h"
+#include "TStyle.h"
+#include "TMath.h"
+#include "TFile.h"
+#include "TPaveStats.h"
+#include "TCanvas.h"
+#include "TLatex.h"
+#include "TPolyMarker.h"
+#include "TSpectrum.h"
+
+int n0;
+
+TCanvas *params_stats(TH1F *hist2draw){
+  char stat[100];
+  TCanvas *se = new TCanvas("a","a",1200,800);
+  TF1 *gaus0, *gaus1, *gp;
+  int f = 0;
+  int ch = 4;
+
+  gaus0 = (TF1*)hist2draw -> FindObject("peak0");
+  gaus1 = (TF1*)hist2draw -> FindObject("peak1");
+  gp = (TF1*)hist2draw -> FindObject("generpoiss");
+  
+  gStyle->SetOptStat();
+  //gStyle->SetOptFit(111);
+  hist2draw -> Draw();
+  se->Update();
+
+  TPaveStats *ps = (TPaveStats*)se->GetPrimitive("stats");
+  ps->SetName("mystats");
+  TList *listOfLines = ps->GetListOfLines();
+  ps->DeleteText();
+  TText *tconst = ps->GetLineWith("Entries");
+  listOfLines->Remove(tconst);
+  TText *tconst1 = ps->GetLineWith("Mean");
+  listOfLines->Remove(tconst1);
+  TText *tconst2 = ps->GetLineWith("Std Dev");
+  listOfLines->Remove(tconst2);
+
+  
+  TLatex *params = new TLatex(0,0,"GP parameters:");
+  params ->SetTextFont(42);
+  params ->SetTextSize(0.0);
+  listOfLines->Add(params);
+
+
+  sprintf(stat, "#chi^{2} / ndf = %4.2f / %4.2d", gp->GetChisquare(), gp->GetNDF());
+  TLatex *chisc = new TLatex(0,0,stat);
+  chisc ->SetTextFont(42);
+  chisc ->SetTextSize(0.0);
+  listOfLines->Add(chisc); 
+  
+  sprintf(stat, "Gain_{SPE} = %4.2f #pm %3.2f", gp->GetParameter(1), gp->GetParError(1));
+  TLatex *gainspe = new TLatex(0,0,stat);
+  gainspe ->SetTextFont(42);
+  gainspe ->SetTextSize(0.0);
+  listOfLines->Add(gainspe);
+
+  sprintf(stat, "Mean_{0} = %5.2f #pm %3.2f", gp->GetParameter(4), gp->GetParError(4));
+  TLatex *mean0 = new TLatex(0,0,stat);
+  mean0 ->SetTextFont(42);
+  mean0 ->SetTextSize(0.0);
+  listOfLines->Add(mean0);
+
+  sprintf(stat, "Sigma_{0} = %5.2f #pm %3.2f", gp->GetParameter(5), gp->GetParError(5));
+  TLatex *sigma0 = new TLatex(0,0,stat);
+  sigma0 ->SetTextFont(42);
+  sigma0 ->SetTextSize(0.0);
+  listOfLines->Add(sigma0);
+
+	  /*
+  sprintf(stat, "ENF = %4.3f #pm %4.3f", enf_eff[f][ch], enf_eff_err[f][ch]);
+  TLatex *enf_value = new TLatex(0,0,stat);
+  enf_value ->SetTextFont(42);
+  enf_value ->SetTextSize(0.0);
+  listOfLines->Add(enf_value);
+
+  sprintf(stat, "N_{Poisson} = %4.3f #pm %4.3f", mu_exp[f][ch], mu_exp_err[f][ch]);
+  TLatex *n_poiss = new TLatex(0,0,stat);
+  n_poiss ->SetTextFont(42);
+  n_poiss ->SetTextSize(0.0);
+  listOfLines->Add(n_poiss);
+ */ 
+  TPolyMarker *pm = (TPolyMarker*)hist2draw->GetListOfFunctions()->FindObject("TPolyMarker");
+  hist2draw -> GetListOfFunctions() -> Remove(pm);
+  delete pm;
+
+  // the following line is needed to avoid that the automatic redrawing of stats
+  hist2draw->SetStats(0);
+  se->Modified();
+  return se;
+}
+
+Double_t generpoiss(Double_t *x, Double_t *param){
+  Float_t xx = x[0];
+  Double_t fitval = 0.;
+  for (int k=0; k<param[7]+1; k++) {
+    fitval += param[8]*param[6]*exp(-0.5*TMath::Power((xx-(param[4]+k*param[1])),2)/(param[5]*param[5]+param[2]*param[2]*k))*(param[3]*TMath::Power((param[3]+k*param[0]),(k-1))*exp(-(param[3]+k*param[0]))/(TMath::Factorial(k)*sqrt(2*3.141593)*sqrt(param[5]*param[5]+param[2]*param[2]*k)));
+  }
+  return fitval;
+}
+
+
+TF1 *fitting(TH1F* hist2proc){
+  Double_t npe_peaks, mu_hist, par[10], lastbin_x;
+  Float_t binwidth;
+  int ntotal, bin[10], binmin, binmin2, temp;
+  TF1 *g1, *g2, *g3, *func, *myf;
+  char label[256],fitlabel[256];
+    hist2proc -> GetXaxis() -> UnZoom();
+    binwidth=hist2proc->GetBinWidth(1);
+    lastbin_x = hist2proc-> GetBinCenter(hist2proc->FindLastBinAbove(0,1));
+
+    hist2proc -> GetXaxis() -> SetRangeUser(0,600);
+    ntotal=hist2proc->Integral();
+    TSpectrum *s = new TSpectrum(15);
+    int nfound = s -> Search(hist2proc, 1.5, "golf", 0.15);
+    Float_t *xpeaks = s -> GetPositionX();
+    for (int p = 0; p < nfound; p++){
+      Double_t xp = xpeaks[p];
+      bin[p] = hist2proc -> GetXaxis() -> FindBin(xp);
+    }
+
+    
+    for (int p = 0; p < nfound; p++){
+      for (int j= p+1; j < nfound; j++){
+	if (bin[p] > bin[j]){
+	  temp = bin[p];
+	  bin[p] = bin[j];
+	  bin[j] = temp;
+	}
+      }
+    }
+    
+    binmin = bin[0];
+    binmin2 = bin[1];
+
+    //if (nfound == 1) binmin2 = binmin+12;
+    //printf("binmin %d, %d\n", binmin, binmin2); 
+    
+    g1 = new TF1("peak0","gaus",hist2proc->GetBinCenter(binmin)-(hist2proc->GetBinCenter(binmin2)-hist2proc->GetBinCenter(binmin))/3,hist2proc->GetBinCenter(binmin)+(hist2proc->GetBinCenter(binmin2)-hist2proc->GetBinCenter(binmin))/3);
+    hist2proc -> Fit(g1,"RQ");
+    g2 = new TF1("peak1","gaus",hist2proc->GetBinCenter(binmin2)-(hist2proc->GetBinCenter(binmin2)-hist2proc->GetBinCenter(binmin))/3,hist2proc->GetBinCenter(binmin2)+(hist2proc->GetBinCenter(binmin2)-hist2proc->GetBinCenter(binmin))/3);
+    hist2proc -> Fit(g2,"RQ+");
+
+    g1->SetLineColor(4); g2->SetLineColor(4);
+    
+    sprintf(fitlabel,"peak0");
+    g1= (TF1*)hist2proc->FindObject(fitlabel);
+    if (g1) g1->GetParameters(&par[0]);
+    sprintf(fitlabel,"peak1");
+    g2= (TF1*)hist2proc->FindObject(fitlabel);
+    if (g2) g2->GetParameters(&par[3]);
+
+    hist2proc->GetXaxis()->SetRangeUser(par[1]-(par[4]-par[1])/2,par[1]+(par[4]-par[1])/2);
+    n0 = hist2proc -> Integral();
+    hist2proc->GetXaxis()->SetRangeUser(0, lastbin_x);
+    npe_peaks = TMath::Nint((lastbin_x-par[1])/(par[4]-par[1]));
+    // ntotal=hist2proc->Integral();
+    mu_hist= -TMath::Log(1.*n0/ntotal);
+
+    sprintf(label, "generpoiss");
+    //func = new TF1(label, generpoiss, par[1]-(par[4]-par[1])/2, lastbin_x, 9);
+    func = new TF1(label, generpoiss, par[1]-(par[4]-par[1])/2, 500, 9);
+    func-> SetParameters( 0.1, par[4]-par[1], sqrt(abs(par[5]*par[5] - par[2]*par[2])), mu_hist, par[1], par[2], binwidth, npe_peaks, ntotal); //initial parameters
+    func -> SetParLimits(0, 0., 1.);
+    //func -> FixParameter(1, par[4]-par[1]);
+    func -> FixParameter(4, par[1]);
+    func -> FixParameter(5, par[2]);
+    func -> FixParameter(6, binwidth);
+    func -> FixParameter(7, npe_peaks);
+    func -> FixParameter(8, ntotal);
+    func-> SetNpx(1000);
+    func-> SetParNames("lambda", "gain_SPE", "sigma1", "mu", "mu0", "sigma0", "binwidth", "npe_peaks", "ntotal");
+    hist2proc -> Fit(func, "RQ+");
+    //hist2proc -> Draw();
+    return (func);
+}
+
+
+
+Double_t langaufun(Double_t *x, Double_t *par) {
+ 
+   //Fit parameters:
+   //par[0]=Width (scale) parameter of Landau density
+   //par[1]=Most Probable (MP, location) parameter of Landau density
+   //par[2]=Total area (integral -inf to inf, normalization constant)
+   //par[3]=Width (sigma) of convoluted Gaussian function
+   //
+   //In the Landau distribution (represented by the CERNLIB approximation),
+   //the maximum is located at x=-0.22278298 with the location parameter=0.
+   //This shift is corrected within this function, so that the actual
+   //maximum is identical to the MP parameter.
+ 
+      // Numeric constants
+      Double_t invsq2pi = 0.3989422804014;   // (2 pi)^(-1/2)
+      Double_t mpshift  = -0.22278298;       // Landau maximum location
+ 
+      // Control constants
+      Double_t np = 100.0;      // number of convolution steps
+      Double_t sc =   5.0;      // convolution extends to +-sc Gaussian sigmas
+ 
+      // Variables
+      Double_t xx;
+      Double_t mpc;
+      Double_t fland;
+      Double_t sum = 0.0;
+      Double_t xlow,xupp;
+      Double_t step;
+      Double_t i;
+ 
+ 
+      // MP shift correction
+      mpc = par[1] - mpshift * par[0];
+ 
+      // Range of convolution integral
+      xlow = x[0] - sc * par[3];
+      xupp = x[0] + sc * par[3];
+ 
+      step = (xupp-xlow) / np;
+ 
+      // Convolution integral of Landau and Gaussian by sum
+      for(i=1.0; i<=np/2; i++) {
+         xx = xlow + (i-.5) * step;
+         fland = TMath::Landau(xx,mpc,par[0]) / par[0];
+         sum += fland * TMath::Gaus(x[0],xx,par[3]);
+ 
+         xx = xupp - (i-.5) * step;
+         fland = TMath::Landau(xx,mpc,par[0]) / par[0];
+         sum += fland * TMath::Gaus(x[0],xx,par[3]);
+      }
+ 
+      return (par[2] * step * sum * invsq2pi / par[3]);
+}
+ 
+ 
+ 
+TF1 *langaufit(TH1F *his, Double_t *fitrange, Double_t *startvalues, Double_t *parlimitslo, Double_t *parlimitshi, Double_t *fitparams, Double_t *fiterrors, Double_t *ChiSqr, Int_t *NDF)
+{
+   // Once again, here are the Landau * Gaussian parameters:
+   //   par[0]=Width (scale) parameter of Landau density
+   //   par[1]=Most Probable (MP, location) parameter of Landau density
+   //   par[2]=Total area (integral -inf to inf, normalization constant)
+   //   par[3]=Width (sigma) of convoluted Gaussian function
+   //
+   // Variables for langaufit call:
+   //   his             histogram to fit
+   //   fitrange[2]     lo and hi boundaries of fit range
+   //   startvalues[4]  reasonable start values for the fit
+   //   parlimitslo[4]  lower parameter limits
+   //   parlimitshi[4]  upper parameter limits
+   //   fitparams[4]    returns the final fit parameters
+   //   fiterrors[4]    returns the final fit errors
+   //   ChiSqr          returns the chi square
+   //   NDF             returns ndf
+ 
+   Int_t i;
+   Char_t FunName[100];
+ 
+   sprintf(FunName,"Fitfcn_%s",his->GetName());
+ 
+   TF1 *ffitold = (TF1*)gROOT->GetListOfFunctions()->FindObject(FunName);
+   if (ffitold) delete ffitold;
+ 
+   TF1 *ffit = new TF1(FunName,langaufun,fitrange[0],fitrange[1],4);
+   ffit->SetParameters(startvalues);
+   ffit->SetParNames("Width","MP","Area","GSigma");
+ 
+   for (i=0; i<4; i++) {
+      ffit->SetParLimits(i, parlimitslo[i], parlimitshi[i]);
+   }
+ 
+   his->Fit(FunName,"R+");   // fit within specified range, use ParLimits, do not plot
+ 
+   ffit->GetParameters(fitparams);    // obtain fit parameters
+   for (i=0; i<4; i++) {
+      fiterrors[i] = ffit->GetParError(i);     // obtain fit parameter errors
+   }
+   ChiSqr[0] = ffit->GetChisquare();  // obtain chi^2
+   NDF[0] = ffit->GetNDF();           // obtain ndf
+   
+   return (ffit);              // return fit function
+ 
+}
+
+void analyse(TString infile){
+  //TFile *fin = new TFile("day2_source2_led_1.root", "READ");
+  //TFile *fin = new TFile("/DATA/KAM/data/day4_CALICE_92_11_2.root", "READ");
+  TFile *fin = new TFile(infile, "READ");
+  TH1F *hist = (TH1F*)fin->Get("hQDCA_13");
+
+  Double_t fr[2];
+  Double_t sv[4], pllo[4], plhi[4], fp[4], fpe[4];
+  fr[0]=750; //0.3*hist->GetMean();
+  fr[1]=3500; //3.0*hist->GetMean();
+  
+  pllo[0]=10.; pllo[1]=150.0; pllo[2]=1000.0; pllo[3]=10.;
+  plhi[0]=5000.0; plhi[1]=5000.0; plhi[2]=100000000.0; plhi[3]=2000.0;
+  sv[0]=176.; sv[1]=1500.0; sv[2]=50000.0; sv[3]=1700.0;
+  
+  Double_t chisqr;
+  Int_t    ndf;
+  TCanvas *se = new TCanvas("b","b",1200,800);
+  
+  TH1F *histcl = (TH1F*)(hist->Clone());
+  TF1 *fitsnr = langaufit(hist,fr,sv,pllo,plhi,fp,fpe,&chisqr,&ndf);  
+
+  TF1 *genp = fitting(histcl);
+  histcl->GetFunction("generpoiss")->SetLineColor(4);
+  hist->Draw();
+  histcl->Draw("sames");
+  histcl->SetLineWidth(0);
+
+  TPaveStats *statb = (TPaveStats*)(hist->FindObject("stats"));
+  statb->SetLineColor(2);
+  TPaveStats *statb1 = (TPaveStats*)(histcl->FindObject("stats"));
+  statb1->SetLineColor(4);
+  //  statb->Draw(); statb1->Draw();
+  se->Update();
+  se->Modified();
+  
+  params_stats(histcl);
+  gStyle->SetOptStat(0);
+  gStyle->SetOptFit(1);
+
+}

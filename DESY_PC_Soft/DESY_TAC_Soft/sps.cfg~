@@ -1,0 +1,18 @@
+# configuration file
+
+outfile      = /DATA/KAM/temp/day4_CALICE_92_11_4.root
+#outfile      = /tmp/bbb.root 
+draw         = 1              # draw data yes=1/no=0
+interactive  = 1             # enter batch mode yes=1/no=0
+nevents      = 20000         # number of events
+SiPM1	= 1400_CPTA
+Tile1 	= ITEP
+SiPM2	= 1600_CPTA
+Tile2 	= ITEP
+# QDC
+nchannel = 2
+channel      = 13,15        # channel
+iped         = 180            # qdc current pedestal (60~255)
+infocycle = 1000
+	    
+

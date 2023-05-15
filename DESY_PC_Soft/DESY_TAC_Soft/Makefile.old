@@ -1,0 +1,48 @@
+CXX = g++
+LOADLIBES = -lm -lserial -DLINUX -l CAENVME -l ncurses -lc
+CXXFLAGS = -DLINUX -Wall -g -fPIC
+TARGET = psrctl
+
+
+all: $(TARGET)
+
+#$(TARGET): $(TARGET).c
+#	$(CXX) $(CFLAGS) -o $(TARGET) $(TARGET).c
+
+psrctl: psrctl.o PSR_DG645.o
+	g++ psrctl.o PSR_DG645.o -o psrctl
+
+arduino_ctl: arduino_ctl.o arduino.o
+	g++ arduino_ctl.o arduino.o -lserial -o arduino_ctl -pthread
+
+serialtest: serialtest.o 
+	g++ serialtest.o -lserial -o serialtest -pthread
+
+HV6517B: HV6517B.o HV6517B.C  
+	g++ HV6517B.o -lgpib -o HV6517B
+#	cp
+# g++ -fPIC -Wall -o hvctl hvctl.C VME.C CAENVME.C HV.C HV6519.C -DLINUX -lserial  -l CAENVME -l ncurses -lc -lm
+
+
+VME.o: VME.h
+	$(CXX) $(CXXFLAGS) $(LOADLIBES) -c VME.C
+
+CAENVME.o: CAENVME.h VME.h
+	$(CXX) $(CXXFLAGS) $(LOADLIBES) -c CAENVME.C
+
+HV.o: HV.h
+	$(CXX) $(CXXFLAGS) $(LOADLIBES) -c HV.C
+
+HV6519.o: HV6519.h
+	$(CXX) $(CXXFLAGS) $(LOADLIBES) -c HV6519.C
+
+hvctl:  hvctl.o VME.o CAENVME.o HV.o HV6519.o
+	$(CXX) $(CXXFLAGS) hvctl.o VME.o CAENVME.o HV.o HV6519.o  $(LOADLIBES) -o hvctl
+#	g++ -o hvctl hvctl.o VME.o CAENVME.o HV.o HV6519.o -DLINUX -lserial -l CAENVME -l ncurses -lc -lm 
+
+tiletester:	tiletester.o  VME.o CAENVME.o ADC.o QDC965A.o VME.o CAENVME.o HV.o ConfigFile.o HV6519.o
+	$(CXX) $(CXXFLAGS) -o tiletester tiletester.C ADC.C QDC965A.C VME.C CAENVME.C HV.C ConfigFile.C HV6519.C -DLINUX -lserial  -l CAENVME -l ncurses -lc -lm -I$ROOTSYS/inlcude -L$ROOTSYS/lib `root-config --glibs`
+
+
+clean: 
+	rm -f psrctl arduino_ctl HV6517B hvctl *.o 
